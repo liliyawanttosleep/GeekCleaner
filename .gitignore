@@ -1,0 +1,11 @@
+# build outputs
+GeekCleaner.exe
+tools/icongen.exe
+tools/out/
+*.pdb
+
+# runtime data: registry backups made on the user's machine
+Backups/
+
+# screenshots of a real machine (program names, paths) - never commit
+preview-*.png
