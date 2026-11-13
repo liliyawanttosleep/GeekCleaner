@@ -26,6 +26,7 @@ This program deletes files and registry keys with administrator rights. Keep the
 - Path matching uses `Util.ContainsPath`, which requires a path boundary after the match so `C:\App` does not match `C:\App2`.
 - Registry keys/values are exported to `Backups\*.reg` before deletion (`LeftoverScanner.Backup`).
 - Junk items whose importance cannot be judged (`Risk == 3`, e.g. large files) are capped at the lowest priority level and are never selected by the one-click buttons.
+- The force-delete helpers in `Force.cs` (take-ownership, ACL reset, process/service kill, reboot-delete) are powerful. They only ever run on paths the user ticked in a confirmation list, and whole-directory targets are still gated by `Util.IsSafePath` at the call sites. Keep both guarantees.
 - **Do not run destructive paths against the developer's real machine while testing.** Use the read-only scans and the screenshot mode below.
 
 ## How to test without admin rights
@@ -42,7 +43,8 @@ It builds a non-elevated copy and runs it with `--shot <dir>`, which loads the a
 
 | File | Role |
 |---|---|
-| `src/Common.cs` | `Util` (paths, sizes, delete, process helpers), `Native` P/Invoke |
+| `src/Common.cs` | `Util` (paths, sizes, `DeleteTree`, process helpers), `Native` P/Invoke |
+| `src/Force.cs` | `Force` — privilege enablement, take-ownership + ACL reset (files / folders / registry keys), watchdog-beating process kill, stop-or-kill services |
 | `src/Apps.cs` | `AppEntry`, `AppScanner` (registry / portable / Store), `Usage` (UserAssist launch records), uninstall advice |
 | `src/Leftovers.cs` | `LeftoverScanner` — registry walk, services, firewall, tasks, files; backup and delete |
 | `src/Junk.cs` | `JunkScanner` — junk categories, full-drive walk, scoring (`JunkItem.Rate`), cleaning |

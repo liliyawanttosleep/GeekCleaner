@@ -179,38 +179,80 @@ namespace GeekCleaner
             return total;
         }
 
-        /// <summary>彻底删除文件或文件夹，返回释放的字节数。失败项写入 failed。</summary>
+        static bool TryFileDelete(string p)
+        {
+            try { File.SetAttributes(p, FileAttributes.Normal); } catch { }
+            try { File.Delete(p); return true; } catch { return false; }
+        }
+
+        static bool TryDirDelete(string p)
+        {
+            try { File.SetAttributes(p, FileAttributes.Directory); } catch { }
+            try { Directory.Delete(p, false); return true; } catch { return false; }
+        }
+
+        static void ScheduleOrFail(string path, List<string> failed, bool rebootFallback)
+        {
+            if (rebootFallback && Native.MoveFileEx(path, null, 4))
+                failed.Add(path + "  （被占用，已安排在重启后删除）");
+            else
+                failed.Add(path + "  （无法删除）");
+        }
+
+        /// <summary>
+        /// 彻底删除文件或文件夹，返回立即释放的字节数。
+        /// 遇到“访问被拒绝”会夺取所有权并重设权限后重试；仍被进程占用的，安排在重启后删除。
+        /// </summary>
         public static long DeleteTree(string path, List<string> failed, bool rebootFallback)
         {
-            long freed = 0;
-            try
+            FileAttributes a;
+            try { a = File.GetAttributes(path); }
+            catch (FileNotFoundException) { return 0; }
+            catch (DirectoryNotFoundException) { return 0; }
+            catch
             {
-                FileAttributes a = File.GetAttributes(path);
-                if ((a & FileAttributes.Directory) == 0)
-                {
-                    long len = new FileInfo(path).Length;
-                    if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, FileAttributes.Normal);
-                    File.Delete(path);
-                    return len;
-                }
-                if ((a & FileAttributes.ReparsePoint) != 0)
-                {
-                    Directory.Delete(path); // 只删除链接本身，不跟随
-                    return 0;
-                }
-                foreach (string e in Directory.GetFileSystemEntries(path))
-                    freed += DeleteTree(e, failed, rebootFallback);
-                if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, FileAttributes.Directory);
-                Directory.Delete(path);
+                // 连属性都读不到（拒绝型 ACL）：夺取所有权后再试
+                Force.GrantFull(path, true);
+                try { a = File.GetAttributes(path); }
+                catch { ScheduleOrFail(path, failed, rebootFallback); return 0; }
             }
-            catch (FileNotFoundException) { }
-            catch (DirectoryNotFoundException) { }
-            catch (Exception ex)
+
+            // 文件
+            if ((a & FileAttributes.Directory) == 0)
             {
-                if (rebootFallback && Native.MoveFileEx(path, null, 4))
-                    failed.Add(path + "  （已安排在重启后删除）");
-                else
-                    failed.Add(path + "  （" + ex.Message.Trim() + "）");
+                long len = 0;
+                try { len = new FileInfo(path).Length; } catch { }
+                if (TryFileDelete(path)) return len;
+                Force.GrantFull(path, false);
+                if (TryFileDelete(path)) return len;
+                ScheduleOrFail(path, failed, rebootFallback);
+                return 0;
+            }
+
+            // 符号链接/联接：只删链接本身，不跟随
+            if ((a & FileAttributes.ReparsePoint) != 0)
+            {
+                if (!TryDirDelete(path)) { Force.GrantFull(path, true); if (!TryDirDelete(path)) ScheduleOrFail(path, failed, rebootFallback); }
+                return 0;
+            }
+
+            // 目录：先删子项
+            long freed = 0;
+            string[] entries;
+            try { entries = Directory.GetFileSystemEntries(path); }
+            catch
+            {
+                Force.GrantFull(path, true);
+                try { entries = Directory.GetFileSystemEntries(path); }
+                catch { ScheduleOrFail(path, failed, rebootFallback); return freed; }
+            }
+            foreach (string e in entries)
+                freed += DeleteTree(e, failed, rebootFallback);
+
+            if (!TryDirDelete(path))
+            {
+                Force.GrantFull(path, true);
+                if (!TryDirDelete(path)) ScheduleOrFail(path, failed, rebootFallback);
             }
             return freed;
         }
@@ -271,24 +313,10 @@ namespace GeekCleaner
             return true;
         }
 
+        /// <summary>反复结束安装目录下运行的所有进程（压制互相拉起的看门狗）。</summary>
         public static void KillProcessesUnder(string dir)
         {
-            int me = Process.GetCurrentProcess().Id;
-            foreach (var p in Process.GetProcesses())
-            {
-                try
-                {
-                    if (p.Id == me || p.Id <= 4) continue;
-                    string f = p.MainModule.FileName;
-                    if (IsUnder(f, dir))
-                    {
-                        p.Kill();
-                        p.WaitForExit(3000);
-                    }
-                }
-                catch { }
-                finally { p.Dispose(); }
-            }
+            Force.KillUnder(dir, 6);
         }
     }
 }

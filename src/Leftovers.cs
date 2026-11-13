@@ -596,7 +596,7 @@ namespace GeekCleaner
             try { r.BackupFile = Backup(sel, appName); }
             catch (Exception ex) { r.Failed.Add("注册表备份失败: " + ex.Message); }
 
-            // 先结束仍在运行的进程
+            // 先结束仍在运行的进程：对每个要删除的文件夹（通常就是安装目录）压制看门狗
             foreach (var it in sel.Where(i => i.Kind == LeftKind.Dir))
                 Util.KillProcessesUnder(it.FsPath);
 
@@ -611,8 +611,9 @@ namespace GeekCleaner
                         switch (kind)
                         {
                             case LeftKind.Service:
-                                Util.RunWait("sc.exe", "stop \"" + it.FsPath + "\"", true);
-                                if (Util.RunWait("sc.exe", "delete \"" + it.FsPath + "\"", true) != 0) r.Failed.Add(it.Display);
+                                Force.StopService(it.FsPath);  // 停止；停不下来就按 PID 结束其进程
+                                Util.RunWait("sc.exe", "delete \"" + it.FsPath + "\"", true);
+                                if (Force.ServiceExists(it.FsPath)) r.Failed.Add(it.Display + "  （服务仍在，可能重启后才会消失）");
                                 else r.Done++;
                                 break;
                             case LeftKind.Task:
@@ -630,7 +631,15 @@ namespace GeekCleaner
                                 break;
                             case LeftKind.RegKey:
                                 using (var bk = OpenHive(it.Hive))
-                                    bk.DeleteSubKeyTree(it.KeyPath, false);
+                                {
+                                    try { bk.DeleteSubKeyTree(it.KeyPath, false); }
+                                    catch (UnauthorizedAccessException)
+                                    {
+                                        // 受保护的项（拒绝型 ACL）：夺取所有权后重试
+                                        Force.GrantKey(bk, it.Hive == "HKLM", it.KeyPath);
+                                        bk.DeleteSubKeyTree(it.KeyPath, false);
+                                    }
+                                }
                                 r.Done++;
                                 break;
                             default:

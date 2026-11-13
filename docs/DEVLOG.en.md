@@ -2,7 +2,7 @@
 
 [中文版](DEVLOG.zh-CN.md) · Keep both files in sync: every change gets the same entry in each.
 
-Last updated: 2026-11-12 · Version: 0.4
+Last updated: 2026-11-13 · Version: 0.5
 
 ---
 
@@ -27,7 +27,7 @@ A Windows desktop tool, modelled on Geek Uninstaller, that (a) lists all install
 - Search terms: cleaned display name (version and bitness stripped), install folder name, uninstall key name; publisher handled separately. A blacklist rejects generic words ("Microsoft", "Update", "Python", …).
 - Registry: full parallel walk of `HKCU\Software` and `HKLM\SOFTWARE`. A key matches when its name equals a term (depth ≤ 4); a value matches when its name or data references the install directory. A `…\shell\<verb>\command` hit removes the whole verb key. A publisher key is removed only if every subkey belongs to the program.
 - Also: services whose `ImagePath` is inside the install directory, firewall rules, scheduled tasks (XML under `System32\Tasks`), folders named after the program under Roaming / Local / LocalLow / ProgramData / Program Files / Common Files / VirtualStore, Start-menu folders, and `.lnk` files pointing into the install directory.
-- Deletion: registry items exported to `Backups\<timestamp>_<name>.reg` first; processes running from the install directory are terminated; files that cannot be removed are scheduled for deletion on reboot; emptied parent keys are cleaned up.
+- Deletion (robust, see `src/Force.cs`): the program enables `SeTakeOwnership`/`SeRestore`/`SeBackup`/`SeDebug` at startup. Processes under the install directory are killed in repeated passes to beat self-restarting watchdogs (e.g. AlibabaProtect). A service is disabled, stopped, and if it will not stop its process is killed by PID, then `sc delete`. On *access denied*, the file/folder's owner is set to Administrators and its DACL replaced with full-control (removing any explicit Deny ACE), then the delete is retried. A registry key that refuses to delete has its ownership taken the same way. Anything still locked by a live process is scheduled for deletion on reboot (`MoveFileEx`). Registry items are exported to `Backups\<timestamp>_<name>.reg` first; emptied parent keys are cleaned up.
 
 ### Junk cleanup page
 - Targeted categories (system drive): user temp, Windows temp, Windows Update download cache, Delivery Optimization cache, error reports and crash dumps, thumbnail/icon cache, browser caches (Chrome, Edge, Brave, 360, QQ, Firefox), Windows logs, developer caches (pip/npm/NuGet), old installers in Downloads, old Windows installations, recycle bin.
@@ -74,6 +74,7 @@ Be honest about this section when you update it.
 - Batch uninstall across several programs.
 - Junk cleaning (the project owner appears to have run it themselves; no report of problems, but no formal test either).
 - Reboot-delete scheduling, service deletion, scheduled-task deletion.
+- **The 0.5 force-delete path (take-ownership, ACL reset, watchdog kill, PID-kill of services) has not been run against a real stubborn target.** It compiles and the read-only UI is unaffected; the logic follows standard Windows admin practice but needs a real test. The project owner's own report of AlibabaProtect ("access denied" on 684 items, 0 B freed) is the motivating case and the thing to verify next.
 - The elevated exe itself was never launched by the agent (same sources as the tested build).
 
 There are no automated tests.
@@ -108,15 +109,21 @@ Not commitments; pick what is useful.
 
 ## 7. Changelog
 
-All entries dated 2026-11-12 (single working session with the project owner).
+### 0.5 — Force delete of stubborn files (2026-11-13)
+- New `src/Force.cs`: enables owner/restore/backup/debug privileges; take-ownership + DACL reset for files, folders and registry keys; repeated-pass process kill to beat watchdogs; stop-or-kill-by-PID for services.
+- `Util.DeleteTree` rewritten: on access-denied it grabs ownership and retries; on in-use it schedules a reboot-delete; honest byte accounting (reboot-scheduled items free 0 B now).
+- Leftover delete: services are disabled + stopped + killed + `sc delete`; protected registry keys have ownership taken before `DeleteSubKeyTree`.
+- Motivated by AlibabaProtect resisting removal (684 access-denied items). **Not yet verified against a real target** — see Verification status.
 
-### 0.4 — Batch, priorities, disk analysis
+### 0.4 — Batch, priorities, disk analysis (2026-11-12)
 - Multi-select batch uninstall / force delete with one merged leftover list.
 - Junk scoring and four priority levels; overall-advice category; one-click selection by level; multi-row tick/untick.
 - Usage data from UserAssist; "last used" and "advice" columns; "suggested for removal" filter.
 - New disk-analysis page with donut chart, age distribution and three ranking lists.
 - Fixes found in review: large files were being rated *can clean* → now capped at *your call*; built-in Microsoft Store apps no longer get removal advice; toolbar overlap on the applications page.
 - Project moved to `D:\GeekCleaner`; repository published.
+
+All 0.1–0.4 entries are from a single working session on 2026-11-12.
 
 ### 0.3 — Redesign
 - Dark theme, sidebar, custom controls, owner-drawn lists, app icon and desktop shortcut.

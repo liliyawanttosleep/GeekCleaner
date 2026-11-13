@@ -20,6 +20,7 @@ namespace GeekCleaner
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            Force.EnablePrivileges();   // 激活取得所有权/还原等特权，才能清除顽固文件与注册表项
             Theme.Init();
             var f = new MainForm();
             if (args.Length == 2 && args[0] == "--shot") f.ShotDir = args[1]; // 开发用：自动截图后退出
